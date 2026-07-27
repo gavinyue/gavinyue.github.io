@@ -1,0 +1,89 @@
+baseURL = "https://gavinyue.com/"
+title = "Gavin Yue"
+locale = "en-US"
+enableRobotsTXT = true
+
+[module]
+  [[module.imports]]
+    path = "github.com/nunocoracao/blowfish/v2"
+
+[caches]
+  [caches.images]
+    dir = ":cacheDir/images"
+
+[params]
+description = "Gavin Yue's notes on data platforms, observability, and coding agents."
+colorScheme = "signal"
+defaultAppearance = "dark"
+autoSwitchAppearance = true
+mainSections = ["posts"]
+enableCodeCopy = true
+enableStructuredBreadcrumbs = true
+highlightCurrentMenuArea = true
+smartTOC = true
+
+[params.header]
+layout = "basic"
+
+[params.footer]
+showThemeAttribution = false
+
+[params.homepage]
+layout = "profile"
+showRecent = true
+showRecentItems = 6
+showMoreLink = true
+showMoreLinkDest = "/posts/"
+
+[params.list]
+showSummary = true
+
+[params.article]
+showDate = true
+showReadingTime = true
+showBreadcrumbs = false
+showTableOfContents = true
+showTaxonomies = true
+showRelatedContent = true
+relatedContentLimit = 3
+
+[params.author]
+name = "Gavin Yue"
+headline = "Field notes on data systems, observability, and coding agents"
+bio = "Software engineer in Seattle."
+links = [
+  { linkedin = "https://www.linkedin.com/in/gavinyue" },
+  { email = "mailto:yue.yuanyuan@gmail.com" },
+]
+
+[[menu.main]]
+name = "Posts"
+url = "/posts/"
+weight = 1
+
+[[menu.main]]
+name = "Links"
+url = "/links/"
+weight = 2
+
+[[menu.main]]
+name = "TIL"
+url = "/til/"
+weight = 3
+
+[[menu.main]]
+name = "Projects"
+url = "/projects/"
+weight = 4
+
+[[menu.main]]
+name = "About"
+url = "/about/"
+weight = 5
+
+[markup.highlight]
+noClasses = true
+style = "dracula"
+
+[pagination]
+pagerSize = 20
