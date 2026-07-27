@@ -66,8 +66,8 @@ body {
 }
 
 main#main-content > article.text-center header {
-  margin-top: clamp(2.25rem, 7vw, 6rem);
-  margin-bottom: clamp(3rem, 8vw, 6.5rem);
+  margin-top: clamp(2rem, 5vw, 4rem);
+  margin-bottom: clamp(2.75rem, 6vw, 4.5rem);
 }
 
 main#main-content > article.text-center header::before {
@@ -81,13 +81,10 @@ main#main-content > article.text-center header::before {
 }
 
 main#main-content > article.text-center h1 {
-  font-size: clamp(3.25rem, 9vw, 6.75rem);
-  line-height: 0.92;
-  letter-spacing: -0.075em;
-  background: linear-gradient(120deg, #f8fafc 18%, #67e8f9 62%, #a3e635);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
+  font-size: clamp(2.5rem, 6vw, 4.25rem);
+  line-height: 1;
+  letter-spacing: -0.055em;
+  color: rgb(241, 245, 249);
 }
 
 main#main-content > article.text-center h2 {
