@@ -53,7 +53,6 @@ headline = "Field notes on data systems, observability, and coding agents"
 bio = "Software engineer in Seattle."
 links = [
   { linkedin = "https://www.linkedin.com/in/gavinyue" },
-  { email = "mailto:yue.yuanyuan@gmail.com" },
 ]
 
 [[menu.main]]

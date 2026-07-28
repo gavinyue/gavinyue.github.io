@@ -7,4 +7,3 @@ I'm Gavin Yue, a software engineer based in the Seattle area. I focus on buildin
 Opinions here are my own.
 
 - [LinkedIn](https://www.linkedin.com/in/gavinyue)
-- [Email](mailto:yue.yuanyuan@gmail.com)
