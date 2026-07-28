@@ -219,6 +219,8 @@ The good case is `N×2`. If queries prune cleanly and spread evenly across shard
 
 The bad case appears when queries are skewed, hot shards dominate, or query concurrency must scale independently of ingestion. Adding shards does not solve that problem, so replicas also grow. At `R=N`, an `N`-node Cloud service maps to `N×N` OSS data nodes, while S3 grows from one logical copy to `N` copies.
 
+Keeper is not a fixed cost that disappears at large `N`. Its initial quorum cost is diluted for a while, but more shards, parts, replicas, and write activity increase coordination load. Keeper writes still pass through a leader; once that path is saturated, larger Keeper nodes or additional coordination domains add another step in both infrastructure and operational cost.
+
 For example, if the workload and retained data double from the baseline, Cloud grows from 2 to 4 nodes and from 1 to 2 TB:
 
 | Monthly estimate at `N=4`, `D=2 TB` | Cloud | OSS: `4×2` | OSS: `4×4` |
