@@ -107,7 +107,33 @@ That is the expensive step hidden behind “add read capacity.” A local proble
 
 Once replication is introduced, the ClickHouse cluster is no longer the only system the team operates. Keeper needs its own odd-sized quorum, durable storage, backups, monitoring, upgrades, latency budgets, and failure procedures.
 
-As the number of replicated tables, parts, replicas, and metadata operations grows, Keeper receives more coordination traffic. A workload that creates many small parts or performs frequent schema and mutation operations can make that pressure visible quickly. Scaling the ClickHouse data nodes does not automatically scale away a Keeper bottleneck.
+Adding replicas increases this burden as well as the data-node bill. Every new replica registers itself, maintains replication state and queues, watches metadata, reports part state, and participates in mutations and recovery. A change from `8×2` to `8×3` adds eight full ClickHouse servers, but those servers all attach to the same Keeper control plane.
+
+The important limit is Keeper's write path. Keeper uses [Raft](https://clickhouse.com/clickhouse/keeper): clients can connect to different Keeper nodes, but writes are ordered through the current leader, appended to its log, and replicated to a quorum before they are committed. Followers improve availability; they do not create independent write leaders. Keeper write throughput is therefore bounded by the leader's CPU and durable-log latency, plus the network and disk latency needed to reach a majority.
+
+This makes coordination writes a finite cluster-wide budget. The ClickHouse [replication documentation](https://clickhouse.com/docs/engines/table-engines/mergetree-family/replication) says that each inserted block creates approximately ten Keeper entries through several transactions. Small insert batches create more blocks, and therefore far more coordination work for the same number of rows. Frequent part creation, schema changes, mutations, replica churn, and recovery add traffic on top.
+
+The rough shape is:
+
+```text
+Keeper pressure =
+  inserted blocks and part metadata
+  + replicated tables × replicas
+  + mutations and DDL
+  + replica recovery and churn
+```
+
+Adding more Keeper quorum members does not scale that write path horizontally because there is still one leader. Scaling the ClickHouse data nodes does not remove the bottleneck either; it can send even more sessions, watches, and metadata operations toward the same leader.
+
+ClickHouse supports `auxiliary_zookeepers`, which allows different tables to place their replication metadata in different Keeper or ZooKeeper clusters. This can partition the write load. It also changes one control plane into several:
+
+- Another odd-sized Keeper quorum to provision and place across failure domains.
+- Another set of disks, snapshots, alerts, certificates, and upgrade procedures.
+- Configuration and credentials distributed to every ClickHouse node that uses it.
+- A permanent table-to-Keeper mapping that operators must understand during incidents.
+- More recovery and migration procedures to test.
+
+That is a valid escape hatch for a very large deployment, but it is not free scale-out. Once Keeper has to be sharded by table, coordination capacity has become an architecture of its own, and the operational cost rises close to linearly with the number of Keeper clusters.
 
 In practice, this creates another class of incidents to understand:
 
