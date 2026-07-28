@@ -187,7 +187,7 @@ But it removes the coupling that matters for the cost model below: in shared-not
 
 Use one deliberately simple assumption: every compute node has **4 vCPU and 8 GB of memory**. Baseline needs two compute nodes and retains **1 TB**.
 
-The `2×` case means **both ingestion throughput and query concurrency double**. For OSS, shards increase from two to four for ingestion, while replicas increase from two to four for query concurrency. Retained logical data also doubles to 2 TB.
+The `2×` case means **both ingestion throughput and query concurrency double independently**. This deliberately conservative model assigns ingestion scaling to shards and query-concurrency scaling to replicas: shards increase from two to four, replicas increase from two to four, and retained logical data doubles to 2 TB.
 
 | Cost or capacity | Cloud baseline | OSS baseline | Cloud: ingestion + query `2×` | OSS: ingestion + query `2×` |
 | --- | ---: | ---: | ---: | ---: |
@@ -213,9 +213,13 @@ These are estimates, not quotes. They assume:
 
 The common work—schema design, query tuning, and data modeling—is excluded from both sides. The OSS operational estimate covers upgrades, backup tests, replication lag, Keeper, rebalancing, and incidents.
 
-The exact prices will move, but the shape is the point. Cloud compute carries a managed-service premium, but Cloud does not need a second data-node fleet just to provide HA, and its storage is not multiplied by the replica count. When ingestion and query concurrency both double, this OSS estimate grows from `2×2` to `4×4`: four times as many data nodes and four physical copies of a dataset that is itself twice as large.
+The exact prices will move, but the shape is the point. Cloud compute carries a managed-service premium, but Cloud does not need a second data-node fleet just to provide HA, and its storage is not multiplied by the replica count. When ingestion and query concurrency both double independently, this OSS estimate grows from `2×2` to `4×4`: four times as many data nodes and four physical copies of a dataset that is itself twice as large.
 
-Even `4×4` may not deliver a full 2× increase in query throughput. Extra replicas primarily help independent concurrent queries; cache imbalance, query fan-out, network and coordinator overhead reduce linearity. They also duplicate the write path and increase replication and Keeper work. The table is therefore an optimistic estimate, not a promise.
+This is quadratic scaling, not exponential, and it is not inevitable. If queries prune cleanly and distribute evenly across the new shards, those shards add read capacity too; replicas may remain at two and the topology is closer to `N×2`. With hot shards or independently growing query concurrency, the topology can become `N×R`, with `R` greater than two.
+
+Cloud does not turn `N` nodes into `N²` compute. Its advantage is that every node can access the same shared data and can participate in ingestion or reads without first creating another physical copy. Total compute still grows roughly with `N`, but the nodes are more fungible.
+
+Even `4×4` may not deliver a full 2× increase in query throughput. Extra replicas primarily help independent concurrent queries; cache imbalance, query fan-out, network and coordinator overhead reduce linearity. They also duplicate the write path and increase replication and Keeper work. The table is therefore an estimate, not a promise.
 
 ## The real trade-off
 
