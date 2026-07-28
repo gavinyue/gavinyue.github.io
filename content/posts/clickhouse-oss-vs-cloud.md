@@ -202,6 +202,32 @@ But Cloud compute is elastic. If the same workload averages 60% of its peak comp
 
 That last part changes the answer. Using a hypothetical fully loaded engineering cost of **$150/hour**, the continuous-compute Cloud premium at `1×2` is equivalent to about **nine operator-hours per month**. At `8×2`, it is about **79 hours per month**. If the self-managed cluster consumes more time than that in capacity planning, upgrades, rebalancing, incidents, and restore testing, Cloud has the lower TCO even though its raw compute rate is higher.
 
+### So when does `M × N` catch Cloud?
+
+Let `M` be the shard count and `N` the replica count. Under these assumptions:
+
+```text
+OSS infra ≈ M × (N × $1,002 + $69 backup) + $222 Keeper
+Cloud at 100% compute ≈ M × $3,580
+Cloud at 60% compute ≈ M × $2,178
+```
+
+This shows why there is no single `M × N` threshold. Increasing `M` scales both estimates almost proportionally. Increasing `N` only multiplies the self-managed data-node fleet, so replica count and Cloud utilization determine where the lines meet.
+
+Ignoring the fixed Keeper cost once `M` is large:
+
+| Cloud compute usage | OSS with 2 replicas | OSS with 3 replicas | OSS with 4 replicas |
+| --- | ---: | ---: | ---: |
+| 100% | ~58% of Cloud | ~86% of Cloud | ~114% of Cloud |
+| 60% | ~95% of Cloud | ~141% of Cloud | ~187% of Cloud |
+
+Two concrete examples make the distinction clear:
+
+- `8×3` OSS is about **$24,822/month**. It is below continuously running Cloud at **$28,640**, but above a 60%-utilized Cloud estimate of **$17,425**.
+- `20×2` OSS is about **$41,682/month**. It remains well below continuously running Cloud at **$71,600**, but is already close to a 60%-utilized Cloud estimate of **$43,560**. Normal operational cost can easily decide the winner.
+
+So the short answer is: with **100% continuous Cloud compute**, this model reaches raw infrastructure parity around four OSS replicas per shard. With Cloud averaging **60% of peak compute**, two OSS replicas are already close to parity, and three replicas make OSS infrastructure more expensive. A large shard count makes the dollar difference larger, but it does not create the crossover by itself.
+
 The corresponding OSS comparison should therefore use the **fully loaded** monthly cost of the production topology, not the price of one VM:
 
 ```text
