@@ -185,39 +185,37 @@ But it removes the coupling that matters for the cost model below: in shared-not
 
 ## A simple TCO estimate
 
-Use one deliberately simple assumption: a Cloud compute node and an OSS data node each have **4 vCPU and 8 GB of memory**. Two compute nodes provide the initial workload capacity, and the retained dataset is **1 TB**. This is a TCO estimate, not an official instance specification or performance guarantee.
+Use one deliberately simple assumption: every compute node has **4 vCPU and 8 GB of memory**. Baseline needs two compute nodes and retains **1 TB**.
 
-The second row doubles both compute demand and retained data. OSS keeps two replicas for HA; its gp3 estimate includes 25% free space for merges and temporary parts.
+The `2×` case means **both ingestion throughput and query concurrency double**. For OSS, shards increase from two to four for ingestion, while replicas increase from two to four for query concurrency. Retained logical data also doubles to 2 TB.
 
-| Scenario | Cloud configuration | Cloud/month | OSS configuration | Keeper/month | OSS infra/month | OSS ops/month | OSS TCO/month |
-| --- | --- | ---: | --- | ---: | ---: | ---: | ---: |
-| Baseline | 2 nodes + 1 TB shared | **$0.90k** | `2×2` = 4 nodes + 3 TB gp3 | $0.22k | $0.93k | 10 h | **$2.43k** |
-| Workload `2×` | 4 nodes + 2 TB shared | **$1.80k** | `4×2` = 8 nodes + 6 TB gp3 | $0.22k | $1.64k | 20 h | **$4.64k** |
-
-The OSS infrastructure totals include Keeper and one backup copy:
-
-```text
-baseline = $448 compute + $240 gp3 + $222 Keeper + $23 backup
-         ≈ $933/month
-
-2×       = $896 compute + $480 gp3 + $222 Keeper + $46 backup
-         ≈ $1,644/month
-```
+| Cost or capacity | Cloud baseline | OSS baseline | Cloud: ingestion + query `2×` | OSS: ingestion + query `2×` |
+| --- | ---: | ---: | ---: | ---: |
+| Topology | 2 compute nodes | `2 shards × 2 replicas` = 4 nodes | 4 compute nodes | `4 shards × 4 replicas` = 16 nodes |
+| Logical data | 1 TB | 1 TB | 2 TB | 2 TB |
+| Billed/provisioned storage | 1 TB shared | 2 TB physical, 3 TB gp3 | 2 TB shared | 8 TB physical, 12 TB gp3 |
+| Compute/month | $872 | $448 | $1,744 | $1,792 |
+| Storage/month | $25 | $240 | $51 | $960 |
+| Keeper/month | Included | $222 | Included | $444 |
+| Backup/month | — | $23 | — | $46 |
+| **Infrastructure/month** | **$897** | **$933** | **$1,795** | **$3,242** |
+| OSS operations | — | 10 h = $1,500 | — | 30 h = $4,500 |
+| **Estimated TCO/month** | **$897** | **$2,433** | **$1,795** | **$7,742** |
 
 These are estimates, not quotes. They assume:
 
 - A Cloud node at roughly **$436/month**, derived from the current [AWS us-east-1 Scale price](https://clickhouse.com/pricing?provider=aws), plus shared storage at **$25.30/TB-month**.
 - An OSS node at roughly **$112/month** for 4 vCPU and 8 GB, based on round [EC2 On-Demand pricing](https://aws.amazon.com/ec2/pricing/).
 - [gp3](https://aws.amazon.com/ebs/pricing/) at roughly **$80/TB-month**.
-- Three Keeper nodes at **$222/month**.
+- Three Keeper nodes at **$222/month** for baseline, with twice the Keeper capacity budgeted for the larger replicated topology.
 - One S3 backup copy of the logical dataset at **$23/TB-month**.
 - OSS operational time at **$150/hour**.
 
 The common work—schema design, query tuning, and data modeling—is excluded from both sides. The OSS operational estimate covers upgrades, backup tests, replication lag, Keeper, rebalancing, and incidents.
 
-The exact prices will move, but the shape is the point. Cloud compute carries a managed-service premium, but Cloud does not need a second data-node fleet just to provide HA, and its storage is not multiplied by the replica count. In this estimate, OSS infrastructure is close to Cloud at baseline and slightly cheaper after doubling. Once operator time is included, Cloud has the lower TCO, and the absolute difference grows with scale.
+The exact prices will move, but the shape is the point. Cloud compute carries a managed-service premium, but Cloud does not need a second data-node fleet just to provide HA, and its storage is not multiplied by the replica count. When ingestion and query concurrency both double, this OSS estimate grows from `2×2` to `4×4`: four times as many data nodes and four physical copies of a dataset that is itself twice as large.
 
-This `2×2 → 4×2` example assumes a write-heavy workload. If only query concurrency doubles, OSS may instead move toward `2×4`. That still creates eight data nodes and four physical copies of the dataset, and it may deliver less than a linear 2× gain because of cache imbalance, query fan-out, and coordinator overhead. It also increases replication and Keeper work.
+Even `4×4` may not deliver a full 2× increase in query throughput. Extra replicas primarily help independent concurrent queries; cache imbalance, query fan-out, network and coordinator overhead reduce linearity. They also duplicate the write path and increase replication and Keeper work. The table is therefore an optimistic estimate, not a promise.
 
 ## The real trade-off
 
