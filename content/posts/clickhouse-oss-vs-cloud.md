@@ -236,9 +236,7 @@ These are estimates, not quotes. They assume:
 - OSS data on S3 at roughly **$23/TB-month**. Each replica owns its own copy, so S3 data storage is approximately `logical data × replica count`; sharding partitions the logical dataset and does not multiply it again.
 - Three Keeper nodes at **$222/month** for baseline, with twice the Keeper capacity budgeted for the larger replicated topology.
 - One S3 backup copy of the logical dataset at **$23/TB-month**.
-- OSS operational time at **$150/hour**.
-
-The common work—schema design, query tuning, and data modeling—is excluded from both sides. The baseline **six operational hours per month** cover routine upgrades and patches, monitoring, backup-and-restore checks, replication lag, and Keeper health. The larger topology budgets twelve hours. Both are steady-state estimates: incidents, resharding projects, and major-version migrations can add much more.
+- **Six OSS operational hours per month** at **$150/hour** for the baseline.
 
 Local cache disks, S3 request and transfer charges, and temporary or inactive parts are excluded. That makes the OSS estimate optimistic rather than punitive.
 
