@@ -189,31 +189,45 @@ Use one deliberately simple assumption: every compute node has **4 vCPU and 8 GB
 
 In this model, Cloud runs those two nodes over one shared copy of the data. The comparable production OSS topology uses two shards for the workload and two replicas for HA: **four data nodes plus a separate three-node Keeper quorum**.
 
-The `2×` case means **both ingestion throughput and query concurrency double independently**. This deliberately conservative model assigns ingestion scaling to shards and query-concurrency scaling to replicas: shards increase from two to four, replicas increase from two to four, and retained logical data doubles to 2 TB.
+The baseline monthly estimate is:
 
-| Cost or capacity | Cloud baseline | OSS baseline | Cloud: ingestion + query `2×` | OSS: ingestion + query `2×` |
-| --- | ---: | ---: | ---: | ---: |
-| Topology | 2 compute nodes | `2 shards × 2 replicas` = 4 nodes | 4 compute nodes | `4 shards × 4 replicas` = 16 nodes |
-| Logical data | 1 TB | 1 TB | 2 TB | 2 TB |
-| Billed data storage | 1 TB shared | 2 TB S3 | 2 TB shared | 8 TB S3 |
-| Compute/month | $872 | $448 | $1,744 | $1,792 |
-| Data storage/month | $25 | $46 | $51 | $184 |
-| Keeper/month | Included | $222 | Included | $444 |
-| Backup/month | — | $23 | — | $46 |
-| **Infrastructure/month** | **$897** | **$739** | **$1,795** | **$2,466** |
-| OSS operations | — | 6 h = $900 | — | 12 h = $1,800 |
-| **Estimated TCO/month** | **$897** | **$1,639** | **$1,795** | **$4,266** |
-
-The same model generalizes from **2 to N Cloud nodes**. Let `D` be the retained logical data at that scale:
-
-| | Cloud | OSS |
+| Cost or capacity | Cloud: 2 nodes | OSS: `2×2` |
 | --- | ---: | ---: |
-| Compute topology | `N` nodes | minimum HA: `N shards × 2 replicas = 2N` nodes |
-| If query capacity must scale independently | the same `N` nodes can read the shared data | `N shards × R replicas`; in the conservative case `R = N`, so `N²` nodes |
-| Data storage | one shared copy: `D` | `R` copies: `R × D` |
-| Coordination | included | Keeper is separate |
+| Data nodes | 2 | 4 |
+| Logical data | 1 TB | 1 TB |
+| Billed data storage | 1 TB shared | 2 TB S3 |
+| Compute/month | $872 | $448 |
+| Data storage/month | $25 | $46 |
+| Keeper/month | Included | $222 |
+| Backup/month | — | $23 |
+| **Infrastructure/month** | **$897** | **$739** |
+| OSS operations | — | 6 h = $900 |
+| **Estimated TCO/month** | **$897** | **$1,639** |
 
-This produces two very different curves. With evenly distributed queries, OSS can remain near `N×2`: linear growth with a constant HA multiplier. If query load is skewed or concurrency requires replicas to grow with the shard count, it approaches `N×N`: compute grows quadratically, and S3 storage grows with the replica count. The baseline above is `N=2`, `D=1 TB`; the doubled case is `N=4`, `D=2 TB`.
+### From 2 nodes to N
+
+Let `N` be the number of Cloud compute nodes and `D` the retained logical data at that scale. There are two materially different OSS outcomes:
+
+| | Cloud | OSS: queries distribute across shards | OSS: queries need more replicas |
+| --- | ---: | ---: | ---: |
+| Compute topology | `N` nodes | `N shards × 2 replicas = 2N` nodes | `N shards × R replicas = N×R` nodes |
+| Data storage | one shared copy: `D` | `2D` | `R×D` |
+| Coordination | Included | Keeper | More replicas also put more work on Keeper |
+| Growth curve | Linear | Linear, with a 2× HA multiplier | If `R` approaches `N`, compute approaches `N²` |
+
+The good case is `N×2`. If queries prune cleanly and spread evenly across shards, every new shard adds ingestion, storage, and useful read capacity, while the replica count stays at two.
+
+The bad case appears when queries are skewed, hot shards dominate, or query concurrency must scale independently of ingestion. Adding shards does not solve that problem, so replicas also grow. At `R=N`, an `N`-node Cloud service maps to `N×N` OSS data nodes, while S3 grows from one logical copy to `N` copies.
+
+For example, if the workload and retained data double from the baseline, Cloud grows from 2 to 4 nodes and from 1 to 2 TB:
+
+| Monthly estimate at `N=4`, `D=2 TB` | Cloud | OSS: `4×2` | OSS: `4×4` |
+| --- | ---: | ---: | ---: |
+| Data nodes | 4 | 8 | 16 |
+| S3 data | 2 TB shared | 4 TB | 8 TB |
+| Infrastructure | $1,795 | $1,478 | $2,466 |
+| Operations | — | 12 h = $1,800 | 12 h = $1,800 |
+| **Estimated TCO** | **$1,795** | **$3,278** | **$4,266** |
 
 These are estimates, not quotes. They assume:
 
@@ -228,13 +242,9 @@ The common work—schema design, query tuning, and data modeling—is excluded f
 
 Local cache disks, S3 request and transfer charges, and temporary or inactive parts are excluded. That makes the OSS estimate optimistic rather than punitive.
 
-The exact prices will move, but the shape is the point. Cloud compute carries a managed-service premium, but Cloud does not need a second data-node fleet just to provide HA, and its storage is not multiplied by the replica count. When ingestion and query concurrency both double independently, this OSS estimate grows from `2×2` to `4×4`: four times as many data nodes and four physical copies of a dataset that is itself twice as large.
+The exact prices will move, but the shape is the point. Cloud does not turn `N` nodes into `N²` compute. Its advantage is that every node can access the same shared data and can participate in ingestion or reads without creating another durable copy first. The nodes are more fungible.
 
-This is quadratic scaling, not exponential, and it is not inevitable. If queries prune cleanly and distribute evenly across the new shards, those shards add read capacity too; replicas may remain at two and the topology is closer to `N×2`. With hot shards or independently growing query concurrency, the topology can become `N×R`, with `R` greater than two.
-
-Cloud does not turn `N` nodes into `N²` compute. Its advantage is that every node can access the same shared data and can participate in ingestion or reads without first creating another physical copy. Total compute still grows roughly with `N`, but the nodes are more fungible.
-
-Even `4×4` may not deliver a full 2× increase in query throughput. Extra replicas primarily help independent concurrent queries; cache imbalance, query fan-out, network and coordinator overhead reduce linearity. They also duplicate the write path and increase replication and Keeper work. The table is therefore an estimate, not a promise.
+The OSS `N×N` case is quadratic, not exponential, and it is not inevitable. But when the workload forces it, extra replicas may still deliver less than linear query gains because of cache imbalance, query fan-out, network, and coordinator overhead. Meanwhile, they definitely duplicate the write path, S3 data, and replication work, while increasing Keeper pressure.
 
 ## The real trade-off
 
