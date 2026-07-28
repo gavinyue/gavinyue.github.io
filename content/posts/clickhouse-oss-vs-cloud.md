@@ -187,21 +187,7 @@ But it removes the coupling that matters for the cost model below: in shared-not
 
 Use one deliberately simple assumption: a Cloud compute node and an OSS data node each have **4 vCPU and 8 GB of memory**. Two compute nodes provide the initial workload capacity, and the retained dataset is **1 TB**. This is a TCO estimate, not an official instance specification or performance guarantee.
 
-Cloud runs two compute nodes over one shared copy of the data. In OSS, the same compute requirement means two shards; production HA adds a second replica of each shard:
-
-```text
-Cloud: 2 compute nodes + 1 TB shared storage
-OSS:   2 shards × 2 replicas = 4 data nodes
-```
-
-Now double the workload, including ingestion and retained storage:
-
-```text
-Cloud: 4 compute nodes + 2 TB shared storage
-OSS:   4 shards × 2 replicas = 8 data nodes
-```
-
-For OSS storage, one replica doubles the physical data. I also add 25% free space for merges and temporary parts:
+The second row doubles both compute demand and retained data. OSS keeps two replicas for HA; its gp3 estimate includes 25% free space for merges and temporary parts.
 
 | Scenario | Cloud configuration | Cloud/month | OSS configuration | Keeper/month | OSS infra/month | OSS ops/month | OSS TCO/month |
 | --- | --- | ---: | --- | ---: | ---: | ---: | ---: |
