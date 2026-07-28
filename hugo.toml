@@ -3,6 +3,10 @@ title = "Gavin Yue"
 locale = "en-US"
 enableRobotsTXT = true
 
+[services]
+  [services.googleAnalytics]
+    id = "G-9HM36LZRYM"
+
 [module]
   [[module.imports]]
     path = "github.com/nunocoracao/blowfish/v2"
