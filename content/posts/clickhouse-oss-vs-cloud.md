@@ -163,148 +163,6 @@ That comparison leaves out the work required to keep a shared-nothing cluster he
 
 For a large, steady workload with an experienced platform team, self-managed ClickHouse can still be the right economic choice. But the honest cost is not just compute plus storage. It includes the engineering time and operational risk created by the topology.
 
-## A simple TCO comparison
-
-A useful comparison starts with two different equations.
-
-For self-managed ClickHouse:
-
-```text
-OSS TCO =
-  (shards × replicas × data-node cost)
-  + Keeper
-  + backups and network
-  + idle failover/headroom
-  + engineering and on-call time
-```
-
-For ClickHouse Cloud:
-
-```text
-Cloud TCO =
-  metered compute
-  + object storage
-  + data transfer
-  + managed-service premium
-  + the smaller amount of database work the team still owns
-```
-
-The first formula is dominated by the provisioned topology. The second is dominated by compute actually kept running and data retained. ClickHouse Cloud can scale compute separately from storage and can scale idle services to zero, according to its [pricing model](https://clickhouse.com/pricing). That matters when traffic is bursty or the cluster has to carry a lot of spare capacity.
-
-There is a useful public price anchor, although it is not a universal quote. In an [official comparison published with November 2025 AWS us-east prices](https://clickhouse.com/blog/how-cloud-data-warehouses-bill-you), ClickHouse listed one compute unit as **2 vCPU and 8 GiB of memory**, at **$0.22/hour for Basic, $0.30/hour for Scale, and $0.39/hour for Enterprise**. The same comparison used **$25.30 per TB-month** for Cloud storage. Prices vary by region and tier, so the current [pricing page](https://clickhouse.com/pricing) should be used for an actual decision.
-
-### An illustrative AWS deployment
-
-To put numbers behind the comparison, assume a self-managed deployment in AWS us-east-1 with:
-
-- One `i4i.4xlarge` per shard replica: 16 vCPU, 128 GiB RAM, and 3.75 TB local NVMe, assumed at **$1.373/hour**, or roughly **$1,002/month**. The hardware specification comes from the [AWS storage-optimized instance documentation](https://docs.aws.amazon.com/ec2/latest/instancetypes/so.html).
-- Two replicas per shard across availability zones.
-- Three small Keeper nodes at roughly **$74/month each**.
-- One S3 backup copy of the logical data, assumed at **$23/TB-month**.
-- 730 hours per month, On-Demand pricing, no Savings Plan, taxes, support, cross-AZ traffic, monitoring, or snapshot request charges.
-
-These are deliberately round assumptions, not a quote. AWS notes that On-Demand instances are billed by actual running time, while committed-use discounts can materially change the result; its current rates should be checked on the [EC2 pricing page](https://aws.amazon.com/ec2/pricing/).
-
-The infrastructure bill then looks like this:
-
-| OSS topology | Data nodes | Keeper | Backup | Approx. infra/month |
-| --- | ---: | ---: | ---: | ---: |
-| `1×2` | $2,004 | $222 | $69 | **$2,295** |
-| `2×2` | $4,008 | $222 | $138 | **$4,368** |
-| `4×2` | $8,016 | $222 | $276 | **$8,514** |
-| `8×2` | $16,032 | $222 | $552 | **$16,806** |
-| `8×3` | $24,048 | $222 | $552 | **$24,822** |
-| `20×2` | $40,080 | $222 | $1,380 | **$41,682** |
-
-The `8×3` row is a useful reminder that adding a third replica is expensive: it adds eight complete data nodes, taking the monthly infrastructure estimate from **$16,806 to $24,822**, or about 48% more. The `20×2` topology needs 40 data-bearing nodes and reaches roughly **$41,682/month** before cross-AZ traffic, observability, support, or operator time. A cluster can reach that shard count because it needs more ingestion CPU even when its local disks are not yet full.
-
-Now create a rough Cloud comparison. Matching the 128 GiB memory of one logical shard requires 16 ClickHouse Cloud compute units under the public definition above. This is a **memory-capacity comparison, not a performance benchmark**: the CPU ratio, storage path, caching, and query behavior differ.
-
-At the Scale list price, 16 compute units running continuously cost:
-
-```text
-16 CU × $0.30 × 730 hours = $3,504/month
-```
-
-Adding 3 TB of Cloud storage gives roughly **$3,580 per logical shard per month**. With continuous compute, the illustrative comparison becomes:
-
-| Logical capacity | OSS infra | Cloud, 100% compute uptime |
-| --- | ---: | ---: |
-| 1 shard | $2,295 | $3,580 |
-| 2 shards | $4,368 | $7,160 |
-| 4 shards | $8,514 | $14,320 |
-| 8 shards | $16,806 | $28,640 |
-
-On raw infrastructure alone, steady 24/7 OSS wins this example. That is the Cloud premium in plain numbers.
-
-But Cloud compute is elastic. If the same workload averages 60% of its peak compute allocation, the eight-shard Cloud estimate falls from about **$28,640 to $17,425**. It is then close to the **$16,806** OSS infrastructure bill before a single hour of ClickHouse operations is counted.
-
-That last part changes the answer. Using a hypothetical fully loaded engineering cost of **$150/hour**, the continuous-compute Cloud premium at `1×2` is equivalent to about **nine operator-hours per month**. At `8×2`, it is about **79 hours per month**. If the self-managed cluster consumes more time than that in capacity planning, upgrades, rebalancing, incidents, and restore testing, Cloud has the lower TCO even though its raw compute rate is higher.
-
-### So when does `M × N` catch Cloud?
-
-Let `M` be the shard count and `N` the replica count. Under these assumptions:
-
-```text
-OSS infra ≈ M × (N × $1,002 + $69 backup) + $222 Keeper
-Cloud at 100% compute ≈ M × $3,580
-Cloud at 60% compute ≈ M × $2,178
-```
-
-This shows why there is no single `M × N` threshold. Increasing `M` scales both estimates almost proportionally. Increasing `N` only multiplies the self-managed data-node fleet, so replica count and Cloud utilization determine where the lines meet.
-
-Ignoring the fixed Keeper cost once `M` is large:
-
-| Cloud compute usage | OSS with 2 replicas | OSS with 3 replicas | OSS with 4 replicas |
-| --- | ---: | ---: | ---: |
-| 100% | ~58% of Cloud | ~86% of Cloud | ~114% of Cloud |
-| 60% | ~95% of Cloud | ~141% of Cloud | ~187% of Cloud |
-
-Two concrete examples make the distinction clear:
-
-- `8×3` OSS is about **$24,822/month**. It is below continuously running Cloud at **$28,640**, but above a 60%-utilized Cloud estimate of **$17,425**.
-- `20×2` OSS is about **$41,682/month**. It remains well below continuously running Cloud at **$71,600**, but is already close to a 60%-utilized Cloud estimate of **$43,560**. Normal operational cost can easily decide the winner.
-
-So the short answer is: with **100% continuous Cloud compute**, this model reaches raw infrastructure parity around four OSS replicas per shard. With Cloud averaging **60% of peak compute**, two OSS replicas are already close to parity, and three replicas make OSS infrastructure more expensive. A large shard count makes the dollar difference larger, but it does not create the crossover by itself.
-
-The corresponding OSS comparison should therefore use the **fully loaded** monthly cost of the production topology, not the price of one VM:
-
-```text
-break-even Cloud bill =
-  data nodes + replicated disks + Keeper + backups
-  + unused headroom + monthly operator cost
-```
-
-If one engineer spends 20 hours a month on upgrades, capacity planning, replication lag, backup tests, and incidents, that time belongs in the calculation. So does the cost of a resharding project, spread across the period it benefits.
-
-## Where the crossover usually appears
-
-There is no honest answer such as “Cloud wins above 20 TB.” Data volume alone does not determine the compute load, query concurrency, compression ratio, or operational burden. The crossover is better described by workload shape.
-
-| Situation | Usually favors |
-| --- | --- |
-| Small, steady, 24/7 workload on one well-utilized server | OSS |
-| Existing platform team already operates ClickHouse well | OSS |
-| Cheap local NVMe and predictable long-running utilization | OSS |
-| Bursty traffic with long idle periods | Cloud |
-| Storage grows much faster than query compute | Cloud |
-| Frequent scaling, resharding, or topology changes | Cloud |
-| Small team where database operations interrupt product work | Cloud |
-| Multiple isolated read workloads over the same data | Cloud |
-
-This is the part that a raw instance-price comparison misses. At small scale, the Cloud premium is visible and a simple OSS deployment can be dramatically cheaper. As the OSS topology grows from `1×2` to `4×2` or `8×2`, replicated disks, failover headroom, Keeper, and operational work grow with it. Cloud becomes economical when its premium is lower than those avoided costs:
-
-```text
-Cloud premium
-<
-replication overhead + idle capacity + Keeper
-+ rebalancing work + routine operations + incident risk
-```
-
-That crossover often arrives earlier for a fast-growing team than for a mature infrastructure organization. It also arrives earlier for spiky workloads than for a cluster that runs near full utilization all day.
-
-But “Cloud always wins at large scale” is too strong. A very large, predictable workload with high utilization and a capable platform team can keep OSS infrastructure cheaper, even after replication. At that point the decision is less about scale itself and more about whether Cloud's elasticity and reduced operational load are worth the premium.
-
 ## What shared storage changes
 
 ClickHouse Cloud uses `SharedMergeTree`: table data lives in shared object storage, while compute replicas process that data. The durable copy of the dataset is no longer tied to the lifecycle of an individual compute node. ClickHouse describes this as the progression from shared-nothing servers with local state to [stateless compute over shared data](https://clickhouse.com/blog/clickhouse-cloud-stateless-compute).
@@ -321,9 +179,141 @@ That changes the scaling problem:
 - Multiple compute services can use the same underlying data.
 - Horizontal scaling does not require manually resharding the table first.
 
-This does not make distributed systems disappear. New compute still needs CPU, memory, local cache warm-up, and coordination. Object storage introduces its own latency and cost model. ClickHouse Cloud also charges a managed-service premium and gives the operator less control over versions, configuration, and infrastructure.
+This does not make distributed systems disappear. New compute still needs CPU, memory, cache warm-up, and coordination. Object storage introduces its own latency and cost model. ClickHouse Cloud also charges a managed-service premium and gives the operator less control over versions, configuration, and infrastructure.
 
-But it removes a particularly expensive coupling: in the shared-nothing model, scaling compute, moving data, and changing topology are often the same operation. With shared storage, they can be separate operations.
+But it removes the coupling that matters for the cost model below: in shared-nothing OSS, storage, ingestion capacity, query capacity, and replication are expressed through the same fleet. In Cloud, they can be priced and scaled more independently.
+
+## A capacity-based TCO comparison
+
+A useful TCO model has to size both systems for work, not memory. The relevant questions are:
+
+- How much data must remain queryable?
+- How many rows per second must become query-ready?
+- How much analytical query work must be served?
+- How much headroom is required while ingest and queries run together?
+
+### Use ClickBench as a calibration point
+
+[ClickBench](https://github.com/ClickHouse/ClickBench) loads 100 million web-analytics rows and runs 43 analytical queries three times. I used its latest published AWS results as calibration points, then derived two rates:
+
+```text
+ingest rows/second = 100,000,000 / load time
+
+hot ClickBench-equivalent queries/hour =
+  43 × 3,600 / sum(best of run 2 and run 3)
+```
+
+“ClickBench-equivalent queries” are units of analytical work, not application QPS. One production query that scans one tenth as much data might count as roughly 0.1 unit; a larger join or scan could count as several. ClickBench is sequential, not a concurrency benchmark.
+
+The derived results are:
+
+| Deployment | Ingest | Hot 43-query cycle | Query work/hour |
+| --- | ---: | ---: | ---: |
+| OSS `c6a.xlarge`, 1 node | 0.29M rows/s | 134.414s | 1,152 |
+| OSS `c6a.4xlarge`, 1 node | 0.34M rows/s | 24.275s | 6,377 |
+| Cloud `2×12 GiB` | 0.55M rows/s | 134.928s | 1,147 |
+| Cloud `2×32 GiB` | 1.38M rows/s | 45.611s | 3,394 |
+| Cloud `2×120 GiB` | 4.78M rows/s | 13.450s | 11,509 |
+| Cloud `2×236 GiB` | 8.55M rows/s | 8.859s | 17,474 |
+
+Sources: [OSS result](https://github.com/ClickHouse/ClickBench/blob/main/clickhouse/results/20260722/c6a.4xlarge.json) and [Cloud results](https://github.com/ClickHouse/ClickBench/tree/main/clickhouse-cloud/results/20260706).
+
+The curves are different. On the published OSS setup, moving from `c6a.xlarge` to `c6a.4xlarge` gives four times the vCPU, and the hot query-work rate improves about 5.5×. Ingestion improves only about 19%. On that machine, the load path is already constrained by more than CPU: storage, fsync, sorting, and part creation matter.
+
+Cloud's published service sizes show a different curve because compute, shared storage, cache, and parallel replicas are different. That is exactly why “match the RAM and compare the invoice” is the wrong model.
+
+There are important caveats. The OSS load reads local Parquet files; the Cloud load reads a remote URL and enables parallel replicas. The OSS result is not replicated, so it does not include replica fetches and repeated merge work. Ingest and queries are measured separately, not simultaneously. These numbers are calibration points for an example, not a substitute for replaying a production workload.
+
+### Turn the benchmark into a capacity envelope
+
+For OSS, let `M` be shards and `R` be replicas. Using the `c6a.4xlarge` result, a simple planning constraint is:
+
+```text
+OSS load =
+  ingest rate / (M × 341k rows/s)
+  + query work / (R × 6,377 per hour)
+  ≤ 75%
+```
+
+Shards divide ingestion across data partitions. Replicas let independent queries use different copies of those shards. The remaining 25% is headroom for merges, replication, failover, and imperfect balance.
+
+Storage adds another constraint. The ClickBench machine uses a 500 GB volume. If only 70% is treated as safely usable, then:
+
+```text
+M ≥ compressed data / 350 GB
+```
+
+For Cloud, choose the smallest published two-replica service where:
+
+```text
+Cloud load =
+  ingest rate / measured service ingest capacity
+  + query work / measured service query capacity
+  ≤ 75%
+```
+
+This is still simplified, but it forces ingestion and query capacity into the same decision instead of assuming every node is interchangeable.
+
+### Price the capacity
+
+For an illustrative AWS us-east-1 comparison, I used:
+
+- `c6a.2xlarge`: about **$223/month** On-Demand compute.
+- `c6a.4xlarge`: about **$447/month** On-Demand compute.
+- One 500 GB `gp3` volume per data node: **$40/month**.
+- A three-node Keeper quorum: **$222/month** total.
+- One S3 backup copy: **$23/TB-month**.
+- ClickHouse Cloud Scale: **$0.30 per compute unit/hour**, with 1 CU defined as 2 vCPU and 8 GiB.
+- ClickHouse Cloud storage: **$25.30/TB-month**.
+- 730 running hours per month.
+- OSS operator time: **$150/hour** fully loaded.
+
+The AWS prices are round assumptions based on [EC2 On-Demand](https://aws.amazon.com/ec2/pricing/) and [gp3 pricing](https://aws.amazon.com/ebs/pricing/). The Cloud rate is the public price used in ClickHouse's [cost methodology](https://clickhouse.com/blog/how-cloud-data-warehouses-bill-you). No volume discounts, Savings Plans, support, taxes, cross-AZ traffic, or internet egress are included.
+
+### Four scaling stages
+
+The workload grows along all three axes:
+
+| Stage | Compressed data | Ingest | Query work/hour |
+| --- | ---: | ---: | ---: |
+| Small | 0.2 TB | 50k rows/s | 500 |
+| Growth | 0.8 TB | 300k rows/s | 1,500 |
+| Scale | 1.5 TB | 800k rows/s | 4,000 |
+| Large | 3.0 TB | 1.5M rows/s | 10,000 |
+
+Applying the 75% capacity envelope produces:
+
+| Stage | OSS deployment | OSS infra | Ops h/month | OSS TCO | Cloud deployment | Cloud cost |
+| --- | --- | ---: | ---: | ---: | --- | ---: |
+| Small | `1×2`, `c6a.2xlarge` | $0.75k | 6 | **$1.65k** | `2×12 GiB` | **$0.66k** |
+| Growth | `3×2`, `c6a.2xlarge` | $1.82k | 14 | **$3.92k** | `2×32 GiB` | **$1.77k** |
+| Scale | `6×2`, `c6a.4xlarge` | $6.10k | 32 | **$10.90k** | `2×120 GiB` | **$6.61k** |
+| Large | `13×4`, `c6a.4xlarge` | $25.62k | 80 | **$37.62k** | `2×236 GiB` | **$13.00k** |
+
+The operational hours are estimates, not ClickBench measurements:
+
+- **6 hours** for a small HA cluster: patching, backup checks, alerts, and occasional replication work.
+- **14 hours** at `3×2`: more capacity review, rolling work, and replica investigation.
+- **32 hours** at `6×2`: regular topology work plus incidents and restore tests amortized monthly.
+- **80 hours** at `13×4`: a material on-call and platform workload, including Keeper and rebalancing projects.
+
+Schema design, query tuning, and data modeling are excluded because both options still require them. The hours above cover work the managed control plane substantially reduces.
+
+### Where the crossover happens
+
+At the **Scale** stage, self-managed infrastructure is still slightly cheaper: **$6.10k versus $6.61k**. Once 32 operator-hours are included, OSS reaches **$10.90k** and Cloud has the lower TCO.
+
+At the **Large** stage, the workload needs both more ingestion partitions and more read concurrency. The illustrative OSS choice becomes `13×4`: 52 data-bearing nodes. Cloud scales compute in front of one shared dataset. Its **$13.00k** managed bill is already below the **$25.62k** OSS infrastructure bill before operational time.
+
+That is the real crossover. It is not “when `M × N` equals 40.” It happens when the capacity constraints force both `M` and `R` upward:
+
+```text
+storage or ingestion pressure → more shards
+read-concurrency pressure      → more replicas
+both at once                   → M × R data nodes
+```
+
+The result is sensitive to the assumptions. Savings Plans, local NVMe, better batching, and a team that already operates Keeper can move the OSS line down. Bursty traffic, a third or fourth replica, auxiliary Keeper clusters, or frequent resharding move it up. The useful output is not the exact dollar; it is a model that can be replaced with measured ingest, query-work, utilization, and operator hours from the real cluster.
 
 ## The real trade-off
 
