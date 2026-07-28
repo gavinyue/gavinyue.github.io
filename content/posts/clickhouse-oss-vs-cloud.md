@@ -185,62 +185,53 @@ But it removes the coupling that matters for the cost model below: in shared-not
 
 ## A simple TCO estimate
 
-Ignore a hypothetical traffic pattern and compare the same published benchmark.
+Use one deliberately simple assumption: a Cloud compute node and an OSS data node each have **4 vCPU and 8 GB of memory**. Two compute nodes provide the initial workload capacity, and the retained dataset is **1 TB**. This is a TCO estimate, not an official instance specification or performance guarantee.
 
-The ClickHouse Cloud result uses **two nodes with 2 compute units each**:
-
-```text
-1 CU = 2 vCPU + 8 GiB
-Cloud total = 4 CU = 8 vCPU + 32 GiB
-```
-
-In the AWS [ClickBench result](https://github.com/ClickHouse/ClickBench/blob/main/clickhouse-cloud/results/20260706/aws.2.16.json), this service loads 100 million rows in 149 seconds—about **670,000 rows/second**—and completes about **1,440 query-work units/hour**.
-
-The closest published OSS result is `c6a.xlarge`, with 4 vCPU and 8 GiB, at about [290,000 rows/second and 1,150 query-work units/hour](https://github.com/ClickHouse/ClickBench/blob/main/clickhouse/results/20260722/c6a.xlarge.json). For this estimate, assume an OSS node has the same 4 vCPU and 16 GiB as one Cloud node and performs at least as well as that result.
-
-To match Cloud:
+Cloud runs two compute nodes over one shared copy of the data. In OSS, the same compute requirement means two shards; production HA adds a second replica of each shard:
 
 ```text
-insert: ceil(670k / 290k) = 3 OSS nodes
-query:  ceil(1,440 / 1,150) = 2 OSS nodes
-
-required for both = max(3, 2) = 3 OSS nodes
+Cloud: 2 compute nodes + 1 TB shared storage
+OSS:   2 shards × 2 replicas = 4 data nodes
 ```
 
-Three OSS nodes can match the benchmark throughput only by splitting the data across three shards. That deployment has no replica. For comparable production HA, each shard needs a second copy:
+Now double the workload, including ingestion and retained storage:
 
 ```text
-3 shards × 2 replicas = 6 OSS data nodes
+Cloud: 4 compute nodes + 2 TB shared storage
+OSS:   4 shards × 2 replicas = 8 data nodes
 ```
 
-This assumes near-linear scale-out and is not a production guarantee. ClickBench measures a bulk load and sequential analytical queries, not sustained ingestion while merges, TTL cleanup, and queries compete for CPU.
+For OSS storage, one replica doubles the physical data. I also add 25% free space for merges and temporary parts:
 
-### Add storage
+| Scenario | Cloud configuration | Cloud/month | OSS configuration | Keeper/month | OSS infra/month | OSS ops/month | OSS TCO/month |
+| --- | --- | ---: | --- | ---: | ---: | ---: | ---: |
+| Baseline | 2 nodes + 1 TB shared | **$0.90k** | `2×2` = 4 nodes + 3 TB gp3 | $0.22k | $0.93k | 10 h | **$2.43k** |
+| Workload `2×` | 4 nodes + 2 TB shared | **$1.80k** | `4×2` = 8 nodes + 6 TB gp3 | $0.22k | $1.64k | 20 h | **$4.64k** |
 
-Assume **100 GB of compressed data per day** and a **30-day TTL**:
+The OSS infrastructure totals include Keeper and one backup copy:
 
 ```text
-100 GB/day × 30 days = 3 TB logical data
+baseline = $448 compute + $240 gp3 + $222 Keeper + $23 backup
+         ≈ $933/month
+
+2×       = $896 compute + $480 gp3 + $222 Keeper + $46 backup
+         ≈ $1,644/month
 ```
-
-Cloud stores approximately one 3 TB logical copy in shared object storage. With three OSS shards, each shard holds about 1 TB. With two replicas, OSS stores 6 TB of physical data. Allowing 25% free space for merges and temporary parts, round each data node up to **1.5 TB gp3**, or **9 TB provisioned across six nodes**.
-
-| Deployment | Data nodes | Compute | Storage | Est. infra/month | Est. ops/month | Est. TCO/month |
-| --- | ---: | --- | --- | ---: | ---: | ---: |
-| Cloud | 2 | 4 CU total | 3 TB shared | **$0.95k** | managed | **$0.95k** |
-| OSS, throughput only | 3 | 12 vCPU, 48 GiB | 4.5 TB gp3 provisioned | **$0.88k** | 6 h | **$1.78k** |
-| OSS, production HA | 6 (`3×2`) | 24 vCPU, 96 GiB | 9 TB gp3 provisioned | **$1.91k** | 12 h | **$3.71k** |
 
 These are estimates, not quotes. They assume:
 
-- ClickHouse Cloud Scale at **$0.2985/CU-hour** and **$25.30/TB-month**, running 730 hours/month.
-- An OSS node at roughly **$150/month** for 4 vCPU and 16 GiB.
-- gp3 at roughly **$80/TB-month**.
-- Three Keeper nodes at **$222/month**, included only in the HA row.
-- One S3 backup of the 3 TB logical dataset at **$23/TB-month**.
+- A Cloud node at roughly **$436/month**, derived from the current [AWS us-east-1 Scale price](https://clickhouse.com/pricing?provider=aws), plus shared storage at **$25.30/TB-month**.
+- An OSS node at roughly **$112/month** for 4 vCPU and 8 GB, based on round [EC2 On-Demand pricing](https://aws.amazon.com/ec2/pricing/).
+- [gp3](https://aws.amazon.com/ebs/pricing/) at roughly **$80/TB-month**.
+- Three Keeper nodes at **$222/month**.
+- One S3 backup copy of the logical dataset at **$23/TB-month**.
 - OSS operational time at **$150/hour**.
 
-The six-node OSS result is not because OSS cannot attach a larger EBS volume. Larger volumes solve storage capacity. The three shards come from the benchmark's insertion-throughput estimate; the second copy comes from HA. If a larger OSS node can match 670,000 rows/second by itself, the fair topology becomes `1×2`, and the TCO changes accordingly. That boundary has to be measured with the real insert path.
+The common work—schema design, query tuning, and data modeling—is excluded from both sides. The OSS operational estimate covers upgrades, backup tests, replication lag, Keeper, rebalancing, and incidents.
+
+The exact prices will move, but the shape is the point. Cloud compute carries a managed-service premium, but Cloud does not need a second data-node fleet just to provide HA, and its storage is not multiplied by the replica count. In this estimate, OSS infrastructure is close to Cloud at baseline and slightly cheaper after doubling. Once operator time is included, Cloud has the lower TCO, and the absolute difference grows with scale.
+
+This `2×2 → 4×2` example assumes a write-heavy workload. If only query concurrency doubles, OSS may instead move toward `2×4`. That still creates eight data nodes and four physical copies of the dataset, and it may deliver less than a linear 2× gain because of cache imbalance, query fan-out, and coordinator overhead. It also increases replication and Keeper work.
 
 ## The real trade-off
 
