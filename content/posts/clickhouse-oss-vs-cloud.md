@@ -88,6 +88,19 @@ It is worth being precise about the shape of this cost. `shards × replicas` is 
 
 What makes the bill feel worse than linear is the way capacity arrives in steps. A new shard normally brings its replicas, disks, cache, merge capacity, and failure-domain placement with it. The cluster is sized for the hottest shard and for failover, not for the average CPU graph. That leaves paid capacity idle between growth events.
 
+The other dimension is read capacity. Replicas can serve independent queries when traffic is balanced across them, so a shard that is saturated by concurrent reads may need another replica even when it has enough storage and ingestion capacity. ClickHouse's own [concurrency sizing guidance](https://clickhouse.com/resources/engineering/high-concurrency-sizing-user-analytics) makes an important distinction: replicas add read throughput, while parallel replicas allow a suitable single query to use multiple replicas. In the normal distributed path, simply adding a replica does not automatically make one query faster.
+
+Technically, a team can add a third replica only to the hot shard. Operationally, that creates an asymmetric cluster: shards now have different read capacity, failure tolerance, cache state, and routing behavior. Many teams keep the topology uniform instead. Moving from two replicas to three then adds one complete copy of **every** shard:
+
+| Topology change | Nodes before | Nodes after | Increase |
+| --- | ---: | ---: | ---: |
+| 4 shards: `4×2 → 4×3` | 8 | 12 | +4 nodes / +50% |
+| 8 shards: `8×2 → 8×3` | 16 | 24 | +8 nodes / +50% |
+| 20 shards: `20×2 → 20×3` | 40 | 60 | +20 nodes / +50% |
+| 8 shards: `8×2 → 8×4` | 16 | 32 | +16 nodes / +100% |
+
+That is the expensive step hidden behind “add read capacity.” A local problem on one shard can turn into `M` new servers because the production topology is kept symmetric. Each server needs the shard's full data, performs replication and background merges, warms its own cache, and consumes recovery bandwidth. Going from two replicas to three is not a small adjustment; it increases the entire data-node fleet by 50%.
+
 ## Keeper becomes part of the scaling boundary
 
 `ReplicatedMergeTree` uses ClickHouse Keeper to coordinate replication metadata. Keeper does not store the table data itself, but it sits on the control path for replicated tables, parts, mutations, and other coordination work.
