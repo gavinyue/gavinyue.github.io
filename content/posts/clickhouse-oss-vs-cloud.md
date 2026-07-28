@@ -165,6 +165,10 @@ The infrastructure bill then looks like this:
 | `2×2` | $4,008 | $222 | $138 | **$4,368** |
 | `4×2` | $8,016 | $222 | $276 | **$8,514** |
 | `8×2` | $16,032 | $222 | $552 | **$16,806** |
+| `8×3` | $24,048 | $222 | $552 | **$24,822** |
+| `20×2` | $40,080 | $222 | $1,380 | **$41,682** |
+
+The `8×3` row is a useful reminder that adding a third replica is expensive: it adds eight complete data nodes, taking the monthly infrastructure estimate from **$16,806 to $24,822**, or about 48% more. The `20×2` topology needs 40 data-bearing nodes and reaches roughly **$41,682/month** before cross-AZ traffic, observability, support, or operator time.
 
 Now create a rough Cloud comparison. Matching the 128 GiB memory of one logical shard requires 16 ClickHouse Cloud compute units under the public definition above. This is a **memory-capacity comparison, not a performance benchmark**: the CPU ratio, storage path, caching, and query behavior differ.
 
