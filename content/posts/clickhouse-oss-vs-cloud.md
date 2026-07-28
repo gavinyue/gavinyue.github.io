@@ -36,6 +36,15 @@ That coupling is where the hidden cost starts.
 
 Suppose a cluster begins with one shard and two replicas. When the shard approaches its storage or compute limit, adding another shard does not automatically redistribute existing data.
 
+There are two common reasons to add shards:
+
+- **Storage capacity:** local disks are filling up, so the dataset has to be partitioned across more machines.
+- **Ingestion capacity:** a single shard cannot parse, sort, compress, and merge incoming data fast enough, so writes have to be spread across more CPUs.
+
+The second limit can arrive before the first. ClickHouse ingestion is often CPU-bound, especially with high row rates, expensive materialized views, complex codecs, or sustained background merges. Ingestion and queries then compete for the same CPU, memory bandwidth, and disk I/O. A node can have plenty of free storage while query latency deteriorates because writes and merges consume its compute budget.
+
+Adding shards increases aggregate ingestion capacity by distributing that work. It also changes the data layout, however, so a compute bottleneck becomes a topology change rather than a simple CPU allocation. Adding replicas does not fully solve it either: replicas can increase read capacity, but each replica still performs replication work and background merges.
+
 You now have to make several decisions:
 
 - What is the new sharding key?
@@ -168,7 +177,7 @@ The infrastructure bill then looks like this:
 | `8×3` | $24,048 | $222 | $552 | **$24,822** |
 | `20×2` | $40,080 | $222 | $1,380 | **$41,682** |
 
-The `8×3` row is a useful reminder that adding a third replica is expensive: it adds eight complete data nodes, taking the monthly infrastructure estimate from **$16,806 to $24,822**, or about 48% more. The `20×2` topology needs 40 data-bearing nodes and reaches roughly **$41,682/month** before cross-AZ traffic, observability, support, or operator time.
+The `8×3` row is a useful reminder that adding a third replica is expensive: it adds eight complete data nodes, taking the monthly infrastructure estimate from **$16,806 to $24,822**, or about 48% more. The `20×2` topology needs 40 data-bearing nodes and reaches roughly **$41,682/month** before cross-AZ traffic, observability, support, or operator time. A cluster can reach that shard count because it needs more ingestion CPU even when its local disks are not yet full.
 
 Now create a rough Cloud comparison. Matching the 128 GiB memory of one logical shard requires 16 ClickHouse Cloud compute units under the public definition above. This is a **memory-capacity comparison, not a performance benchmark**: the CPU ratio, storage path, caching, and query behavior differ.
 
