@@ -240,10 +240,6 @@ These are estimates, not quotes. They assume:
 
 Local cache disks, S3 request and transfer charges, and temporary or inactive parts are excluded. That makes the OSS estimate optimistic rather than punitive.
 
-The exact prices will move, but the shape is the point. Cloud does not turn `N` nodes into `N²` compute. Its advantage is that every node can access the same shared data and can participate in ingestion or reads without creating another durable copy first. The nodes are more fungible.
-
-The OSS `N×N` case is quadratic, not exponential, and it is not inevitable. But when the workload forces it, extra replicas may still deliver less than linear query gains because of cache imbalance, query fan-out, network, and coordinator overhead. Meanwhile, they definitely duplicate the write path, S3 data, and replication work, while increasing Keeper pressure.
-
 ## The real trade-off
 
 The difference between ClickHouse OSS and ClickHouse Cloud is not simply free software versus a cloud bill.
