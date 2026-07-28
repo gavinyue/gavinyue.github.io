@@ -258,6 +258,7 @@ This is still simplified, but it forces ingestion and query capacity into the sa
 
 For an illustrative AWS us-east-1 comparison, I used:
 
+- `c6a.xlarge`: about **$112/month** On-Demand compute.
 - `c6a.2xlarge`: about **$223/month** On-Demand compute.
 - `c6a.4xlarge`: about **$447/month** On-Demand compute.
 - One 500 GB `gp3` volume per data node: **$40/month**.
@@ -285,14 +286,14 @@ Applying the 75% capacity envelope produces:
 
 | Stage | OSS deployment | OSS infra | Ops h/month | OSS TCO | Cloud deployment | Cloud cost |
 | --- | --- | ---: | ---: | ---: | --- | ---: |
-| Small | `1×2`, `c6a.2xlarge` | $0.75k | 6 | **$1.65k** | `2×12 GiB` | **$0.66k** |
+| Small | `1×1`, `c6a.xlarge` | $0.16k | 2 | **$0.46k** | `2×12 GiB` | **$0.66k** |
 | Growth | `3×2`, `c6a.2xlarge` | $1.82k | 14 | **$3.92k** | `2×32 GiB` | **$1.77k** |
 | Scale | `6×2`, `c6a.4xlarge` | $6.10k | 32 | **$10.90k** | `2×120 GiB` | **$6.61k** |
 | Large | `13×4`, `c6a.4xlarge` | $25.62k | 80 | **$37.62k** | `2×236 GiB` | **$13.00k** |
 
 The operational hours are estimates, not ClickBench measurements:
 
-- **6 hours** for a small HA cluster: patching, backup checks, alerts, and occasional replication work.
+- **2 hours** for a simple single node: patching, backup checks, and basic monitoring. This row deliberately has no HA and no Keeper.
 - **14 hours** at `3×2`: more capacity review, rolling work, and replica investigation.
 - **32 hours** at `6×2`: regular topology work plus incidents and restore tests amortized monthly.
 - **80 hours** at `13×4`: a material on-call and platform workload, including Keeper and rebalancing projects.
@@ -301,7 +302,11 @@ Schema design, query tuning, and data modeling are excluded because both options
 
 ### Where the crossover happens
 
-At the **Scale** stage, self-managed infrastructure is still slightly cheaper: **$6.10k versus $6.61k**. Once 32 operator-hours are included, OSS reaches **$10.90k** and Cloud has the lower TCO.
+At the **Small** stage, one well-utilized OSS server is the cheapest option: about **$0.46k/month** including two operator-hours, versus **$0.66k** for Cloud. That is the shared-nothing bargain.
+
+The crossover appears at **Growth**, when the requirements can no longer fit comfortably on that one server. Sharding for storage and ingestion, then adding a replica for availability and read capacity, changes the deployment from one data node to `3×2` plus Keeper. The estimated OSS TCO reaches **$3.92k**, versus **$1.77k** for Cloud.
+
+The raw infrastructure comparison is not perfectly monotonic because the ClickBench query curve improves sharply on `c6a.4xlarge`. At the **Scale** stage, OSS infrastructure alone is slightly cheaper—**$6.10k versus $6.61k**—but 32 operator-hours take its TCO to **$10.90k**. This is why a single `M × R` threshold is less useful than the capacity envelope.
 
 At the **Large** stage, the workload needs both more ingestion partitions and more read concurrency. The illustrative OSS choice becomes `13×4`: 52 data-bearing nodes. Cloud scales compute in front of one shared dataset. Its **$13.00k** managed bill is already below the **$25.62k** OSS infrastructure bill before operational time.
 
