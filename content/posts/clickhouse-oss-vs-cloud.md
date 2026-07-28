@@ -145,15 +145,51 @@ The first formula is dominated by the provisioned topology. The second is domina
 
 There is a useful public price anchor, although it is not a universal quote. In an [official comparison published with November 2025 AWS us-east prices](https://clickhouse.com/blog/how-cloud-data-warehouses-bill-you), ClickHouse listed one compute unit as **2 vCPU and 8 GiB of memory**, at **$0.22/hour for Basic, $0.30/hour for Scale, and $0.39/hour for Enterprise**. The same comparison used **$25.30 per TB-month** for Cloud storage. Prices vary by region and tier, so the current [pricing page](https://clickhouse.com/pricing) should be used for an actual decision.
 
-At the Scale list price, a service consuming six compute units continuously would be about:
+### An illustrative AWS deployment
+
+To put numbers behind the comparison, assume a self-managed deployment in AWS us-east-1 with:
+
+- One `i4i.4xlarge` per shard replica: 16 vCPU, 128 GiB RAM, and 3.75 TB local NVMe, assumed at **$1.373/hour**, or roughly **$1,002/month**. The hardware specification comes from the [AWS storage-optimized instance documentation](https://docs.aws.amazon.com/ec2/latest/instancetypes/so.html).
+- Two replicas per shard across availability zones.
+- Three small Keeper nodes at roughly **$74/month each**.
+- One S3 backup copy of the logical data, assumed at **$23/TB-month**.
+- 730 hours per month, On-Demand pricing, no Savings Plan, taxes, support, cross-AZ traffic, monitoring, or snapshot request charges.
+
+These are deliberately round assumptions, not a quote. AWS notes that On-Demand instances are billed by actual running time, while committed-use discounts can materially change the result; its current rates should be checked on the [EC2 pricing page](https://aws.amazon.com/ec2/pricing/).
+
+The infrastructure bill then looks like this:
+
+| OSS topology | Data nodes | Keeper | Backup | Approx. infra/month |
+| --- | ---: | ---: | ---: | ---: |
+| `1×2` | $2,004 | $222 | $69 | **$2,295** |
+| `2×2` | $4,008 | $222 | $138 | **$4,368** |
+| `4×2` | $8,016 | $222 | $276 | **$8,514** |
+| `8×2` | $16,032 | $222 | $552 | **$16,806** |
+
+Now create a rough Cloud comparison. Matching the 128 GiB memory of one logical shard requires 16 ClickHouse Cloud compute units under the public definition above. This is a **memory-capacity comparison, not a performance benchmark**: the CPU ratio, storage path, caching, and query behavior differ.
+
+At the Scale list price, 16 compute units running continuously cost:
 
 ```text
-6 CU × $0.30 × 730 hours ≈ $1,314/month
+16 CU × $0.30 × 730 hours = $3,504/month
 ```
 
-That is compute only. Storage, transfer, support choices, and any additional compute services still need to be added. It is not an apples-to-apples benchmark against six self-managed vCPUs; it is simply a way to turn the Cloud invoice into something concrete.
+Adding 3 TB of Cloud storage gives roughly **$3,580 per logical shard per month**. With continuous compute, the illustrative comparison becomes:
 
-The corresponding OSS comparison should use the **fully loaded** monthly cost of the production topology, not the price of one VM:
+| Logical capacity | OSS infra | Cloud, 100% compute uptime |
+| --- | ---: | ---: |
+| 1 shard | $2,295 | $3,580 |
+| 2 shards | $4,368 | $7,160 |
+| 4 shards | $8,514 | $14,320 |
+| 8 shards | $16,806 | $28,640 |
+
+On raw infrastructure alone, steady 24/7 OSS wins this example. That is the Cloud premium in plain numbers.
+
+But Cloud compute is elastic. If the same workload averages 60% of its peak compute allocation, the eight-shard Cloud estimate falls from about **$28,640 to $17,425**. It is then close to the **$16,806** OSS infrastructure bill before a single hour of ClickHouse operations is counted.
+
+That last part changes the answer. Using a hypothetical fully loaded engineering cost of **$150/hour**, the continuous-compute Cloud premium at `1×2` is equivalent to about **nine operator-hours per month**. At `8×2`, it is about **79 hours per month**. If the self-managed cluster consumes more time than that in capacity planning, upgrades, rebalancing, incidents, and restore testing, Cloud has the lower TCO even though its raw compute rate is higher.
+
+The corresponding OSS comparison should therefore use the **fully loaded** monthly cost of the production topology, not the price of one VM:
 
 ```text
 break-even Cloud bill =
