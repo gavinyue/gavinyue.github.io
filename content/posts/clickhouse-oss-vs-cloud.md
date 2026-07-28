@@ -185,55 +185,62 @@ But it removes the coupling that matters for the cost model below: in shared-not
 
 ## A simple TCO estimate
 
-Start with one explicit workload:
+Ignore a hypothetical traffic pattern and compare the same published benchmark.
 
-- **50,000 rows/second** continuously.
-- **1,000 ClickBench query-work units/hour**.
-- **7-day TTL**.
-- **100 compressed bytes/row**, rounded from the published ClickBench data size.
-
-The retained logical data is therefore:
+The ClickHouse Cloud result uses **two nodes with 2 compute units each**:
 
 ```text
-50,000 × 604,800 seconds × 100 bytes ≈ 3 TB
+1 CU = 2 vCPU + 8 GiB
+Cloud total = 4 CU = 8 vCPU + 32 GiB
 ```
 
-For Cloud, assume two replicas with **4 vCPU and 16 GiB each**. The published AWS [ClickBench result](https://github.com/ClickHouse/ClickBench/blob/main/clickhouse-cloud/results/20260706/aws.2.16.json) reports a 670,000 rows/second bulk load and about 1,440 query-work units/hour. The bulk-load number is not sustainable production ingestion: it does not include a long-running mix of merges, TTL cleanup, and concurrent queries. I use **50,000 rows/second** here as a conservative sizing estimate, not a measured service limit.
+In the AWS [ClickBench result](https://github.com/ClickHouse/ClickBench/blob/main/clickhouse-cloud/results/20260706/aws.2.16.json), this service loads 100 million rows in 149 seconds—about **670,000 rows/second**—and completes about **1,440 query-work units/hour**.
 
-For OSS, start with one shard and two replicas. Each data node has the same **4 vCPU and 16 GiB** as a Cloud node, plus **4 TB of gp3**. Only 3 TB is treated as usable, leaving 25% for merges and temporary parts.
+The closest published OSS result is `c6a.xlarge`, with 4 vCPU and 8 GiB, at about [290,000 rows/second and 1,150 query-work units/hour](https://github.com/ClickHouse/ClickBench/blob/main/clickhouse/results/20260722/c6a.xlarge.json). For this estimate, assume an OSS node has the same 4 vCPU and 16 GiB as one Cloud node and performs at least as well as that result.
+
+To match Cloud:
 
 ```text
-1 shard × 2 replicas
-= 2 data nodes
-= 6 TB used and 8 TB provisioned local storage
+insert: ceil(670k / 290k) = 3 OSS nodes
+query:  ceil(1,440 / 1,150) = 2 OSS nodes
+
+required for both = max(3, 2) = 3 OSS nodes
 ```
 
-The closest published OSS result is `c6a.xlarge`, at about [290,000 rows/second in the bulk load and 1,150 query-work units/hour](https://github.com/ClickHouse/ClickBench/blob/main/clickhouse/results/20260722/c6a.xlarge.json) on one unreplicated node. As with Cloud, this is only a benchmark reference, not a production guarantee.
+Three OSS nodes can match the benchmark throughput only by splitting the data across three shards. That deployment has no replica. For comparable production HA, each shard needs a second copy:
 
-Now double ingestion, query work, and retained data twice. OSS does not need to add shards yet: it can first scale each EC2 instance and EBS volume vertically, just as Cloud scales each compute node.
+```text
+3 shards × 2 replicas = 6 OSS data nodes
+```
 
-| Demand | Ingest | Query work/h | 7-day data | Cloud: 2 nodes | Cloud/month | OSS: `1×2` | OSS disk | OSS infra/month | Ops/month | OSS TCO/month |
-| --- | ---: | ---: | ---: | --- | ---: | --- | ---: | ---: | ---: | ---: |
-| `1×` | 50k/s | 1,000 | 3 TB | `4 vCPU, 16 GiB each` | **$0.95k** | `4 vCPU, 16 GiB each` | `2 × 4 TB` | $1.23k | 8 h | **$2.43k** |
-| `2×` | 100k/s | 2,000 | 6 TB | `8 vCPU, 32 GiB each` | **$1.90k** | `8 vCPU, 32 GiB each` | `2 × 8 TB` | $2.24k | 12 h | **$4.04k** |
-| `4×` | 200k/s | 4,000 | 12 TB | `16 vCPU, 64 GiB each` | **$3.79k** | `16 vCPU, 64 GiB each` | `2 × 16 TB` | $4.26k | 18 h | **$6.96k** |
+This assumes near-linear scale-out and is not a production guarantee. ClickBench measures a bulk load and sequential analytical queries, not sustained ingestion while merges, TTL cleanup, and queries compete for CPU.
 
-These are estimates, not quotes. The assumptions are:
+### Add storage
 
-- Cloud Scale compute at **$0.2985 per compute unit/hour**, with one compute unit equal to 2 vCPU and 8 GiB, running for 730 hours/month.
-- Cloud storage of 3, 6, and 12 TB at **$25.30/TB-month**.
-- OSS compute at roughly **$150/month per 4 vCPU and 16 GiB**, scaling linearly.
-- gp3 at roughly **$80/TB-month**, provisioned separately on both replicas.
-- Three Keeper nodes at **$222/month** total and one S3 backup at **$23/TB-month**.
-- OSS operational work valued at **$150/hour**.
+Assume **100 GB of compressed data per day** and a **30-day TTL**:
 
-The estimated 8, 12, and 18 operational hours cover upgrades, backup and restore tests, replication lag, Keeper, and incidents. They exclude schema design and query tuning because both Cloud and OSS still require that work.
+```text
+100 GB/day × 30 days = 3 TB logical data
+```
 
-The storage column is where the architectural difference becomes visible. Cloud retains one logical copy in shared object storage. OSS stores one local copy per replica: 12 TB of logical data becomes 24 TB used and 32 TB provisioned across the two replicas.
+Cloud stores approximately one 3 TB logical copy in shared object storage. With three OSS shards, each shard holds about 1 TB. With two replicas, OSS stores 6 TB of physical data. Allowing 25% free space for merges and temporary parts, round each data node up to **1.5 TB gp3**, or **9 TB provisioned across six nodes**.
 
-Nothing in this `1× → 2× → 4×` example proves that OSS needs another shard or a third replica. Sharding begins only when vertical scaling is no longer enough: ingestion and queries compete for CPU, EBS throughput or merge bandwidth reaches a ceiling, recovery takes too long, or the largest acceptable node becomes a failure-domain risk. Another replica is justified only by read concurrency or availability requirements.
+| Deployment | Data nodes | Compute | Storage | Est. infra/month | Est. ops/month | Est. TCO/month |
+| --- | ---: | --- | --- | ---: | ---: | ---: |
+| Cloud | 2 | 4 CU total | 3 TB shared | **$0.95k** | managed | **$0.95k** |
+| OSS, throughput only | 3 | 12 vCPU, 48 GiB | 4.5 TB gp3 provisioned | **$0.88k** | 6 h | **$1.78k** |
+| OSS, production HA | 6 (`3×2`) | 24 vCPU, 96 GiB | 9 TB gp3 provisioned | **$1.91k** | 12 h | **$3.71k** |
 
-Once those boundaries are crossed, OSS moves from scale-up to scale-out and the `shards × replicas` multiplier begins. The crossover cannot be estimated honestly until that boundary is measured on the real workload.
+These are estimates, not quotes. They assume:
+
+- ClickHouse Cloud Scale at **$0.2985/CU-hour** and **$25.30/TB-month**, running 730 hours/month.
+- An OSS node at roughly **$150/month** for 4 vCPU and 16 GiB.
+- gp3 at roughly **$80/TB-month**.
+- Three Keeper nodes at **$222/month**, included only in the HA row.
+- One S3 backup of the 3 TB logical dataset at **$23/TB-month**.
+- OSS operational time at **$150/hour**.
+
+The six-node OSS result is not because OSS cannot attach a larger EBS volume. Larger volumes solve storage capacity. The three shards come from the benchmark's insertion-throughput estimate; the second copy comes from HA. If a larger OSS node can match 670,000 rows/second by itself, the fair topology becomes `1×2`, and the TCO changes accordingly. That boundary has to be measured with the real insert path.
 
 ## The real trade-off
 
