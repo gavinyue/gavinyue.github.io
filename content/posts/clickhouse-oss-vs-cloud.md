@@ -68,6 +68,17 @@ A cluster with two shards and two replicas already has four data-bearing nodes. 
 
 Replication also changes failure recovery. A replacement node may be easy to provision, but it is not useful until it has recovered enough data and cache state to serve the workload safely. At large data volumes, that recovery path deserves the same capacity planning as normal traffic.
 
+It is worth being precise about the shape of this cost. `shards × replicas` is **multiplicative**, not mathematically exponential. If the replica count stays at two, doubling the shards doubles the data-node fleet:
+
+| Topology | Data-bearing nodes |
+| --- | ---: |
+| 1 shard × 2 replicas | 2 |
+| 2 shards × 2 replicas | 4 |
+| 4 shards × 2 replicas | 8 |
+| 8 shards × 2 replicas | 16 |
+
+What makes the bill feel worse than linear is the way capacity arrives in steps. A new shard normally brings its replicas, disks, cache, merge capacity, and failure-domain placement with it. The cluster is sized for the hottest shard and for failover, not for the average CPU graph. That leaves paid capacity idle between growth events.
+
 ## Keeper becomes part of the scaling boundary
 
 `ReplicatedMergeTree` uses ClickHouse Keeper to coordinate replication metadata. Keeper does not store the table data itself, but it sits on the control path for replicated tables, parts, mutations, and other coordination work.
@@ -104,6 +115,82 @@ That comparison leaves out the work required to keep a shared-nothing cluster he
 
 For a large, steady workload with an experienced platform team, self-managed ClickHouse can still be the right economic choice. But the honest cost is not just compute plus storage. It includes the engineering time and operational risk created by the topology.
 
+## A simple TCO comparison
+
+A useful comparison starts with two different equations.
+
+For self-managed ClickHouse:
+
+```text
+OSS TCO =
+  (shards × replicas × data-node cost)
+  + Keeper
+  + backups and network
+  + idle failover/headroom
+  + engineering and on-call time
+```
+
+For ClickHouse Cloud:
+
+```text
+Cloud TCO =
+  metered compute
+  + object storage
+  + data transfer
+  + managed-service premium
+  + the smaller amount of database work the team still owns
+```
+
+The first formula is dominated by the provisioned topology. The second is dominated by compute actually kept running and data retained. ClickHouse Cloud can scale compute separately from storage and can scale idle services to zero, according to its [pricing model](https://clickhouse.com/pricing). That matters when traffic is bursty or the cluster has to carry a lot of spare capacity.
+
+There is a useful public price anchor, although it is not a universal quote. In an [official comparison published with November 2025 AWS us-east prices](https://clickhouse.com/blog/how-cloud-data-warehouses-bill-you), ClickHouse listed one compute unit as **2 vCPU and 8 GiB of memory**, at **$0.22/hour for Basic, $0.30/hour for Scale, and $0.39/hour for Enterprise**. The same comparison used **$25.30 per TB-month** for Cloud storage. Prices vary by region and tier, so the current [pricing page](https://clickhouse.com/pricing) should be used for an actual decision.
+
+At the Scale list price, a service consuming six compute units continuously would be about:
+
+```text
+6 CU × $0.30 × 730 hours ≈ $1,314/month
+```
+
+That is compute only. Storage, transfer, support choices, and any additional compute services still need to be added. It is not an apples-to-apples benchmark against six self-managed vCPUs; it is simply a way to turn the Cloud invoice into something concrete.
+
+The corresponding OSS comparison should use the **fully loaded** monthly cost of the production topology, not the price of one VM:
+
+```text
+break-even Cloud bill =
+  data nodes + replicated disks + Keeper + backups
+  + unused headroom + monthly operator cost
+```
+
+If one engineer spends 20 hours a month on upgrades, capacity planning, replication lag, backup tests, and incidents, that time belongs in the calculation. So does the cost of a resharding project, spread across the period it benefits.
+
+## Where the crossover usually appears
+
+There is no honest answer such as “Cloud wins above 20 TB.” Data volume alone does not determine the compute load, query concurrency, compression ratio, or operational burden. The crossover is better described by workload shape.
+
+| Situation | Usually favors |
+| --- | --- |
+| Small, steady, 24/7 workload on one well-utilized server | OSS |
+| Existing platform team already operates ClickHouse well | OSS |
+| Cheap local NVMe and predictable long-running utilization | OSS |
+| Bursty traffic with long idle periods | Cloud |
+| Storage grows much faster than query compute | Cloud |
+| Frequent scaling, resharding, or topology changes | Cloud |
+| Small team where database operations interrupt product work | Cloud |
+| Multiple isolated read workloads over the same data | Cloud |
+
+This is the part that a raw instance-price comparison misses. At small scale, the Cloud premium is visible and a simple OSS deployment can be dramatically cheaper. As the OSS topology grows from `1×2` to `4×2` or `8×2`, replicated disks, failover headroom, Keeper, and operational work grow with it. Cloud becomes economical when its premium is lower than those avoided costs:
+
+```text
+Cloud premium
+<
+replication overhead + idle capacity + Keeper
++ rebalancing work + routine operations + incident risk
+```
+
+That crossover often arrives earlier for a fast-growing team than for a mature infrastructure organization. It also arrives earlier for spiky workloads than for a cluster that runs near full utilization all day.
+
+But “Cloud always wins at large scale” is too strong. A very large, predictable workload with high utilization and a capable platform team can keep OSS infrastructure cheaper, even after replication. At that point the decision is less about scale itself and more about whether Cloud's elasticity and reduced operational load are worth the premium.
+
 ## What shared storage changes
 
 ClickHouse Cloud uses `SharedMergeTree`: table data lives in shared object storage, while compute replicas process that data. The durable copy of the dataset is no longer tied to the lifecycle of an individual compute node. ClickHouse describes this as the progression from shared-nothing servers with local state to [stateless compute over shared data](https://clickhouse.com/blog/clickhouse-cloud-stateless-compute).
@@ -131,6 +218,13 @@ The difference between ClickHouse OSS and ClickHouse Cloud is not simply free so
 It is a choice about where complexity lives.
 
 With self-managed ClickHouse, the software is open and the infrastructure can be cheaper, but the user owns sharding, replication, coordination, recovery, and the people-hours behind them. With ClickHouse Cloud, more of that complexity is absorbed by the platform, and the premium appears directly on the invoice.
+
+My practical rule is:
+
+- Choose OSS when the workload is stable, the hardware will stay busy, and the team already has the operational capability.
+- Choose Cloud when growth is uncertain, utilization is uneven, or avoiding topology and on-call work is more valuable than minimizing the raw infrastructure bill.
+
+The decision should be revisited as the topology changes. A `1×2` cluster and an `8×2` cluster are not the same economic product, even if both are called “self-managed ClickHouse.”
 
 After operating the OSS architecture, the question I keep coming back to is not whether shared storage is useful. It clearly is.
 
