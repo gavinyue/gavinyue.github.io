@@ -16,6 +16,20 @@ html.dark {
   background-color: #060b14;
 }
 
+html:not(.dark) {
+  background-color: #e1e9f0;
+}
+
+html:not(.dark) body {
+  background-color: #e8eff5;
+  background-image:
+    radial-gradient(circle at 12% 0%, rgba(8, 145, 178, 0.11), transparent 30rem),
+    linear-gradient(rgba(51, 65, 85, 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(51, 65, 85, 0.05) 1px, transparent 1px);
+  background-size: auto, 48px 48px, 48px 48px;
+  background-attachment: fixed;
+}
+
 html.dark body {
   background-color: #0a121f;
   background-image:
@@ -223,6 +237,23 @@ main#main-content > section > h2::after {
 .article-content blockquote {
   border-color: var(--gy-signal);
   background: var(--gy-signal-soft);
+}
+
+html:not(.dark) main#main-content > article.text-center h1 {
+  color: rgb(15, 23, 42);
+}
+
+html:not(.dark) .home-intro,
+html:not(.dark) .article-link__summary {
+  color: rgb(71, 85, 105);
+}
+
+html:not(.dark) .article-link--simple:hover header a {
+  color: rgb(14, 116, 144);
+}
+
+html:not(.dark) .article-content > p:first-child {
+  color: rgb(51, 65, 85);
 }
 
 a[href*="/tags/"].rounded-md {
